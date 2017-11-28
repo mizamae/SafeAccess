@@ -1,6 +1,6 @@
 INTRODUCTION
 This device performs an access control by means of 125 kHz RFID tags as the one shown in Figure 1. It consists of a microcontroller and a RFID reader which are communicated by means of a serial link.
-![alt text](https://raw.githubusercontent.com/mizamae/SafeAccess/path/to/RFID_tag.jpg)
+![alt text](https://github.com/mizamae/SafeAccess.git/media/RFID_tag.jpg)
 When an accepted RFID tag is swiped around the reader, the device grants access to a protected zone by means of switching on a relay that power on the lights. The capabilities of this device can be further increased by integrating an electro-mechanical locking mechanism to the door. This could be locked and unlocked by means of two additional digital outputs.
 
 SPECIFICATIONS
