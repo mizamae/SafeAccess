@@ -1,3 +1,5 @@
+
+
 // RFID reader ID-12 for Arduino
 // 
 
@@ -5,6 +7,17 @@
 #include <PLCTimer.h>
 #include <Wire.h>
 #include <LiquidTWI.h>
+
+#define __ID12__
+//#define __MFRC-522_SPI__
+
+#ifdef  __MFRC-522_SPI__
+  #include <SPI.h>
+  #include <MFRC522.h>
+  #define RST_PIN  9    //Pin 9 para el reset del RC522
+  #define SS_PIN  10   //Pin 10 para el SS (SDA) del RC522
+  MFRC522 mfrc522(SS_PIN, RST_PIN); //Creamos el objeto para el RC522
+#endif
 
 #define __DEBUGGING__
 #define __CODE_SIZE__        5  // numero de bytes de cada codigo
@@ -19,14 +32,20 @@
 #define __LCD_ADDR__  0 // direccion del LCD en el bus I2C
 #define __RELAY_ON__  0
 #define __RELAY_OFF__  1
+#define __SWIPES_MASTERKEY__  5 // numero de pasadas de una masterkey para eliminar la EEPROM
+#define __MAX_DENIED_TRIES__  5
+#define __DENIED_TRIES_DECRMT_TIME__  60  // minutes to decrement one denied try
 // declaracion de variables globales
-byte default_code[__CODE_SIZE__]  = {25, 00, 113, 93, 171};
+byte actual_duration_light=__DURATION_LIGHT__;
+byte master_code[__CODE_SIZE__]  = {25, 00, 113, 93, 171};
 byte accepted_codes[__MAX_NUM_CODES__][__CODE_SIZE__];
 byte buffCode[__CODE_SIZE__];
 byte *ptrbuffCode  = &buffCode[0];                  // puntero al buffer donde se almacena el codigo leido
 volatile byte cuenta_minutos = 0, cuenta_segundos = 0; // variables actualizadas en la interrupcion
 volatile static boolean actualizaLCD;
 volatile static boolean tryComm;
+volatile static byte denied_codes=0;
+
 struct CODES_TBL
 {
   byte *code;
@@ -45,11 +64,11 @@ const byte codeMemPin      = 5;            // IN memorizar nuevo codigo
 
 static byte estado         =  0;      // variable que recoge el estado actual del sistema
 static byte estado_ant     = 255;
-
+static bool sistema_bloqueado = false;
 // Connect via i2c, default address #0 (A0-A2 not jumpered)
 LiquidTWI lcd(__LCD_ADDR__);
 static bool LCDinit=false;
-PLCTimer TC1(TEMP_CON),TC2(TEMP_CON);
+PLCTimer TC1(TEMP_CON),TC2(TEMP_CON),TC3(TEMP_CON);
 
 void setup() {
   byte error,n, i, j;
@@ -79,7 +98,7 @@ void setup() {
     EEPROM.write(__POS_NUMCODES_EEPROM__, 1);
     for (i = 0; i  < __CODE_SIZE__; i++)
     {
-      EEPROM.write(i + __POS_CODES_EEPROM__, default_code[i]);
+      EEPROM.write(i + __POS_CODES_EEPROM__, master_code[i]);
       delay(100);
     }
     n  = 1;
@@ -92,7 +111,7 @@ void setup() {
   {
     _tabla_codigos.num_rows  = n;
   }
-  
+
   code_load_EEPROM(&_tabla_codigos);
   
   #ifdef __DEBUGGING__
@@ -152,6 +171,13 @@ void setup() {
   
   TC1.Delay  = 2;
   TC2.Delay  = 100;
+  TC3.In     = false;
+  TC3.Delay  = 60*__DENIED_TRIES_DECRMT_TIME__;
+  
+  #ifdef  __MFRC-522_SPI__
+    SPI.begin();        //Iniciamos el Bus SPI
+    mfrc522.PCD_Init(); // Iniciamos  el MFRC522
+  #endif
 }
 void enable_T1_interrupt()
 {
@@ -180,12 +206,23 @@ ISR(TIMER1_COMPA_vect)    // interrupcion del timer 1
   }
   actualizaLCD = true;
   TC1.Execute();
+  TC3.Execute();
+  if (TC3.OUT)    // se ha cumpido el tiempo de espera
+  {
+    TC3.In     = false;
+    denied_codes--;
+    #ifdef __DEBUGGING__
+        Serial.print("Se reducen los intentos fallidos ");
+        Serial.println(denied_codes);
+    #endif
+  }else{TC3.In     = (denied_codes > 0);}
 }
 
 void loop () {
 
   boolean code_OK = false;
   boolean read_OK = false;
+  boolean MasterCode = false;
   static int counterNoComm=0;
   int i;
   byte kk;
@@ -235,19 +272,30 @@ void loop () {
 //      tryComm  = false;
 //    }
 //  }
+
   TC2.In     = (!digitalRead(keyDesactPin));
   TC2.Execute();
   if (TC2.OUT)    // se activa la llave
   {
     estado  = 200;
+    sistema_bloqueado=false;
+    denied_codes=0;
   }
+
+  if (denied_codes>=__MAX_DENIED_TRIES__)
+  {
+    sistema_bloqueado=true;
+  }else{sistema_bloqueado=false;}
+  
   switch (estado)
   {
     case 0:  // IDLE STATE
       enable_T1_interrupt();
       digitalWrite(lightPin, __RELAY_OFF__);
       digitalWrite(hornPin, __RELAY_OFF__);
-      read_code(&_tabla_codigos, &code_OK, ptrbuffCode, &read_OK);
+      actual_duration_light=__DURATION_LIGHT__;
+      
+      read_code(&_tabla_codigos, &code_OK, ptrbuffCode, &read_OK,&MasterCode);
       TC1.In     = (digitalRead(NOTdoorClosedPin)==HIGH);
       if (TC1.OUT)    // se abre la puerta
       {
@@ -258,10 +306,13 @@ void loop () {
         #endif
         estado   = 1;
       }
-      if (code_OK)
+      if (code_OK) 
       {
         disable_T1_interrupt();
-        estado   = 10;
+        if (MasterCode)
+        { estado   = 11;
+          MasterCode=false;}
+        else{estado   = 10;}
         code_OK  = false;
       }
       break;
@@ -293,7 +344,8 @@ void loop () {
         digitalWrite(beepPin, 0);
       }
 
-      read_code(&_tabla_codigos, &code_OK, ptrbuffCode, &read_OK);
+      
+      read_code(&_tabla_codigos, &code_OK, ptrbuffCode, &read_OK,&MasterCode);
       
       if (cuenta_minutos*60+cuenta_segundos  >= __DURATION_CODE__*60)
       {
@@ -307,7 +359,10 @@ void loop () {
       if (code_OK)
       {
         disable_T1_interrupt();
-        estado   = 10;
+        if (MasterCode)
+        { estado=11;
+          MasterCode=false;
+        }else{ estado   = 10;}
         digitalWrite(beepPin, 0);
         code_OK  = false;
       }
@@ -318,12 +373,12 @@ void loop () {
       enable_T1_interrupt();
       if ((actualizaLCD) && (!lcd.NoComm))   
       {
-        kk  = __DURATION_LIGHT__ - cuenta_minutos;
+        kk  = actual_duration_light - cuenta_minutos;
         actualizaLCD  = false;
         lcd.setBacklight(HIGH);
         if (kk  <= 1)   
         {
-          kk  = __DURATION_LIGHT__ * 60 - (cuenta_minutos * 60 + cuenta_segundos);          
+          kk  = actual_duration_light * 60 - (cuenta_minutos * 60 + cuenta_segundos);          
           lcd.print(kk);
           lcd.print(" seg  ");
           if ((kk  < 10) && (kk  % 2 == 0))
@@ -341,8 +396,21 @@ void loop () {
         lcd.setCursor(10, 1);
       }
 
-
-      if (cuenta_minutos  >= __DURATION_LIGHT__)
+      read_code(&_tabla_codigos, &code_OK, ptrbuffCode, &read_OK,&MasterCode);
+      if (code_OK)
+      {
+        actual_duration_light+=__DURATION_LIGHT__- cuenta_minutos;
+		disable_T1_interrupt();
+        code_OK  = false;
+		digitalWrite(beepPin, 0);
+        if (MasterCode)
+        { 
+          estado=11;
+          MasterCode=false;
+        }
+      }
+      
+      if (cuenta_minutos  >= actual_duration_light)
       {
         #ifdef __DEBUGGING__
         Serial.print("Apagar luz");
@@ -357,11 +425,58 @@ void loop () {
          estado          = 250;
       }
       break;
+    case 11:  // IDENTIFICACION MASTERKEY OK, TEMPORIZANDO LA LUZ
+      static byte numswipes=0;
+      digitalWrite(lightPin, __RELAY_ON__);
+      digitalWrite(hornPin, __RELAY_OFF__);
+      enable_T1_interrupt();
+      
+      read_code(&_tabla_codigos, &code_OK, ptrbuffCode, &read_OK,&MasterCode);
+      
+      if (MasterCode)
+      {
+        if (numswipes++ >=  __SWIPES_MASTERKEY__)
+        {
+            EEPROM.write(__POS_NUMCODES_EEPROM__, 1);
+            delay(100);
+            _tabla_codigos.num_rows  = 1;
+            code_load_EEPROM(&_tabla_codigos);  
+            lcd.print("Codes Erased");
+            delay(1000);
+            disable_T1_interrupt();
+            estado=10;
+            numswipes =0;
+        }else
+        {
+            lcd.print(__SWIPES_MASTERKEY__-numswipes+1);
+        }
+        lcd.setCursor(0, 1);
+        code_OK  = false;
+        MasterCode=false;
+      }else{lcd.print(__SWIPES_MASTERKEY__-numswipes+1);}
+      
+      if (cuenta_minutos  >= actual_duration_light)
+      {
+        disable_T1_interrupt();
+        #ifdef __DEBUGGING__
+        Serial.print("Volver al estado 0");
+        Serial.println();
+        #endif
+        digitalWrite(beepPin, 0);
+        estado          = 0;
+        numswipes =0;
+      }
+
+      if (!digitalRead(codeMemPin))    // new mem code button pushed
+      {
+         estado          = 250;
+      }
+      break;
     case 100:  // TIMEOUT PARA LA IDENTIFICACION, ACTIVAR ALARMA
       disable_T1_interrupt();
       digitalWrite(lightPin, __RELAY_OFF__);
       digitalWrite(hornPin, __RELAY_ON__);
-      read_code(&_tabla_codigos, &code_OK, ptrbuffCode, &read_OK);
+      read_code(&_tabla_codigos, &code_OK, ptrbuffCode, &read_OK,&MasterCode);
       if (code_OK)
       {
         #ifdef __DEBUGGING__
@@ -393,28 +508,42 @@ void loop () {
       enable_T1_interrupt();
       digitalWrite(lightPin, __RELAY_ON__);
       digitalWrite(hornPin, __RELAY_OFF__);
-      read_code(&_tabla_codigos, &code_OK, ptrbuffCode, &read_OK);
+      read_code(&_tabla_codigos, &code_OK, ptrbuffCode, &read_OK,&MasterCode);
       if (read_OK)
       {
         read_OK  = false;
+        lcd.clear();
+        lcd.setCursor(0, 0);
         lcd.print("Detectado codigo");
+        lcd.setCursor(0, 1);
+        
         #ifdef __DEBUGGING__
         Serial.print("Nuevo codigo almacenado: ");
         #endif
+        byte fila;
+        if (_tabla_codigos.num_rows < __MAX_NUM_CODES__)
+        {
+          fila= _tabla_codigos.num_rows;
+          _tabla_codigos.num_rows++;
+        }else
+        {
+          fila= _tabla_codigos.num_rows;
+        }
         for (i = 0; i < _tabla_codigos.num_cols; i++)
         {
-          EEPROM.write(_tabla_codigos.num_rows * _tabla_codigos.num_cols + i + __POS_CODES_EEPROM__, *(ptrbuffCode + i));
+          EEPROM.write(fila * _tabla_codigos.num_cols + i + __POS_CODES_EEPROM__, *(ptrbuffCode + i));
+          lcd.print(*(ptrbuffCode + i));
           #ifdef __DEBUGGING__
           Serial.print(*(ptrbuffCode + i), DEC);
           Serial.print(",");
           #endif
           delay(100);
         }
-        if (_tabla_codigos.num_rows < __MAX_NUM_CODES__)
-        {
-          _tabla_codigos.num_rows++;
-        }
+       
         EEPROM.write(__POS_NUMCODES_EEPROM__, _tabla_codigos.num_rows);
+        delay(1000);
+        code_load_EEPROM(&_tabla_codigos);
+        
         #ifdef __DEBUGGING__
         Serial.println();
         #endif
@@ -474,6 +603,13 @@ void text2lcd(byte estado)
       lcd.print("Luz off:    min");
       lcd.setCursor(10, 1);
       break;
+    case 11:  // IDENTIFICACION MASTERKEY OK, TEMPORIZANDO LA LUZ
+      lcd.setBacklight(HIGH);
+      lcd.print("MASTERKEY");
+      lcd.setCursor(2, 1);
+      lcd.print("for program");
+      lcd.setCursor(0, 1);
+      break;
     case 100:  // TIMEOUT PARA LA IDENTIFICACION, ACTIVAR ALARMA
       lcd.setBacklight(HIGH);
       lcd.print("Alarma activa");
@@ -495,7 +631,9 @@ void text2lcd(byte estado)
 
 
 }
-void read_code(struct CODES_TBL *tabla_codigos, boolean *code_OK, byte *codeRead, boolean *read_OK)
+
+#ifdef __ID12__
+void read_code(struct CODES_TBL *tabla_codigos, boolean *code_OK, byte *codeRead, boolean *read_OK, boolean *masterKey)
 {
   byte i = 0;
   byte val = 0;
@@ -540,10 +678,9 @@ void read_code(struct CODES_TBL *tabla_codigos, boolean *code_OK, byte *codeRead
       }
 
       // Output to Serial:
-
-      if (bytesread == 12) {                          // if 12 digit read is complete
+      if (bytesread == 12){                          // if 12 digit read is complete
         *read_OK  = true;
-        code_check(tabla_codigos, &code[0], code_OK);
+        code_check(tabla_codigos, &code[0], code_OK,masterKey);
         #ifdef __DEBUGGING__
         Serial.print("5-byte code: ");
         #endif
@@ -561,8 +698,10 @@ void read_code(struct CODES_TBL *tabla_codigos, boolean *code_OK, byte *codeRead
         
         if (*code_OK)
         {
-          Serial.print("Access granted");
-          Serial.println();
+          if (*masterKey){Serial.print("Access granted to MasterKey");}
+          else{Serial.print("Access granted");}
+          Serial.println();  
+          serialFlush();        
         }
         else
         {
@@ -571,11 +710,42 @@ void read_code(struct CODES_TBL *tabla_codigos, boolean *code_OK, byte *codeRead
         }
         #endif
       }
-
       bytesread = 0;
     }
   }
 }
+#endif
+
+#ifdef __MFRC-522_SPI__
+
+void read_code(struct CODES_TBL *tabla_codigos, boolean *code_OK, byte *codeRead, boolean *read_OK, boolean *masterKey)
+{
+  byte code[6];
+    if (mfrc522.PICC_IsNewCardPresent()) 
+    { //Verifica si hay una tarjeta
+        if (mfrc522.PICC_ReadCardSerial()) 
+        { //Funcion que lee la tarjeta
+              Serial.println(" ");
+              Serial.println(" ");
+              Serial.println("El numero de serie de la tarjeta es  : ");
+              for(int i=0; i < mfrc522.uid.size; i++){
+                    if(i!=mfrc522.uid.size){
+                      Serial.print(mfrc522.uid.uidByte[i],HEX);
+                      Serial.print(" ");
+                    }
+                    else{
+                      Serial.print(mfrc522.uid.uidByte[i],HEX);
+                      Serial.print(" ");
+                    }
+                    //code[i]=mfrc522.uid.uidByte[i];
+              }
+              MFRC522::PICC_Type piccType = mfrc522.PICC_GetType(mfrc522.uid.sak);
+              Serial.println(mfrc522.PICC_GetTypeName(piccType));
+          }
+     }
+    mfrc522.PICC_HaltA(); 
+}
+#endif
 
 void code_load_EEPROM(struct CODES_TBL *tabla_codigos)
 {
@@ -589,27 +759,48 @@ void code_load_EEPROM(struct CODES_TBL *tabla_codigos)
   }
 }
 
-void code_check(struct CODES_TBL *tabla_codigos, byte *codigo, boolean *code_check)
+void code_check(struct CODES_TBL *tabla_codigos, byte *codigo, boolean *code_check, boolean *IsmasterKey)
 {
   int i, j;
-
-  for (i = 0; i < tabla_codigos->num_rows; i++)
+  if (!sistema_bloqueado)
   {
-    *code_check  = true;
-    for (j = 0; j < tabla_codigos->num_cols; j++)
+    for (i = 0; i < tabla_codigos->num_rows; i++)
     {
-      if (*(tabla_codigos->code + tabla_codigos->num_cols * i + j) != *(codigo + j))
+      *code_check  = true;
+      for (j = 0; j < tabla_codigos->num_cols; j++)
       {
-        *code_check  = false;
+        if (*(tabla_codigos->code + tabla_codigos->num_cols * i + j) != *(codigo + j))
+        {
+          *code_check  = false;
+          break;
+        }
+      }
+      if (*code_check)
+      {
+        if (i==0){*IsmasterKey=true;} // si la coincidencia es con el primer codigo, es llave maestra
+        else{*IsmasterKey=false;}
         break;
       }
     }
-    if (*code_check)
+  
+    if (!(*code_check))
+      {
+        denied_codes++; 
+        #ifdef __DEBUGGING__
+            Serial.print("Intentos fallidos ");
+            Serial.println(denied_codes);
+        #endif
+      }
+  }else
     {
-      break;
+      (*code_check)=false;
+      (*IsmasterKey)=false;
     }
-  }
-
 }
 
+void serialFlush(){
+  while(Serial.available() > 0) {
+    char t = Serial.read();
+  }
+}   
 
