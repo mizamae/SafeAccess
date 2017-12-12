@@ -1,5 +1,7 @@
 # INTRODUCTION
 
+Find out more details on http://www.aboutmyarduinos.com/rfid-access-control/
+
 This device performs an access control by means of 125 kHz RFID tags as the one shown in Figure 1. It consists of a microcontroller and a RFID reader which are communicated by means of a serial link.
 
 ![Alt text](/media/RFID_tag.jpg?raw=true "Figure 1")
@@ -21,7 +23,7 @@ The board 1 comprises the microprocessor, the digital inputs (DI) and digital ou
 
 ![Alt text](/media/Board1.PNG?raw=true "Figure 3")
 
-In the initial prototypes of this board, there was no onboard 5V voltage regulator so an external one should be used to avoid relying on the microcontroller’s regulator. In this situation, the Vin pin in the microcontroller should be cut and left floating and it should be powered from the external voltage regulator at 5V (see Figure 4).
+In the initial prototypes of this board, there was no onboard 5V voltage regulator so an external one should be used to avoid relying on the microcontrollerâ€™s regulator. In this situation, the Vin pin in the microcontroller should be cut and left floating and it should be powered from the external voltage regulator at 5V (see Figure 4).
 
 ![Alt text](/media/Board1_regulator.png?raw=true "Figure 4 Initial prototype boards")
 
