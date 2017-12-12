@@ -226,53 +226,6 @@ void loop () {
   static int counterNoComm=0;
   int i;
   byte kk;
-
-  
-//  if (lcd.NoComm)
-//  {
-//    counterNoComm++;
-//    if (counterNoComm >=  __NUM_CYCLES_NO_COMM__)
-//    {
-//      tryComm  = true;
-//      counterNoComm=0;
-//      #ifdef __DEBUGGING__
-//        Serial.print("LCD comm variable is ");
-//        Serial.println(lcd.NoComm);
-//      #endif
-//    }
-//    
-//  }
-//  
-//  if ((tryComm) && (lcd.NoComm))
-//  {
-//    // The i2c_scanner uses the return value of
-//    // the Write.endTransmisstion to see if
-//    // a device did acknowledge to the address.
-//    byte error;
-//    tryComm  = false;
-//    Wire.beginTransmission(__LCD_ADDR__);
-//    error = Wire.endTransmission();
-//    if (error == 0) //found LCD response
-//    {
-//      lcd.begin(16, 2);
-//      #ifdef __DEBUGGING__
-//        Serial.print("LCD comm variable is ");
-//        Serial.println(lcd.NoComm);
-//      #endif
-//      if (!lcd.NoComm)
-//      {
-//        lcd.print("Inicializando");
-//      } else
-//      {
-//        #ifdef __DEBUGGING__
-//          Serial.print("LCD is not responding");
-//          Serial.println();
-//        #endif
-//      }
-//      tryComm  = false;
-//    }
-//  }
-
   TC2.In     = (!digitalRead(keyDesactPin));
   TC2.Execute();
   if (TC2.OUT)    // se activa la llave
@@ -400,6 +353,9 @@ void loop () {
       if (code_OK)
       {
         actual_duration_light+=__DURATION_LIGHT__- cuenta_minutos;
+        lcd.setCursor(0, 1);
+        lcd.print("Luz off:    min");
+        lcd.setCursor(10, 1);
 		disable_T1_interrupt();
         code_OK  = false;
 		digitalWrite(beepPin, 0);
