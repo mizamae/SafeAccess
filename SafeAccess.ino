@@ -68,7 +68,7 @@ static bool sistema_bloqueado = false;
 // Connect via i2c, default address #0 (A0-A2 not jumpered)
 LiquidTWI lcd(__LCD_ADDR__);
 static bool LCDinit=false;
-PLCTimer TC1(TEMP_CON),TC2(TEMP_CON),TC3(TEMP_CON);
+volatile PLCTimer TC1(TEMP_CON),TC2(TEMP_CON),TC3(TEMP_CON);
 
 void setup() {
   byte error,n, i, j;
@@ -280,7 +280,7 @@ void loop () {
         kk  = __DURATION_CODE__ * 60 - (cuenta_minutos * 60 + cuenta_segundos);
         if (kk < 10)
         {
-          lcd.print(" ");
+          lcd.setCursor(11, 1);
         }
         lcd.print(kk);
         lcd.setCursor(10, 1);
@@ -332,8 +332,8 @@ void loop () {
         if (kk  <= 1)   
         {
           kk  = actual_duration_light * 60 - (cuenta_minutos * 60 + cuenta_segundos);          
+          lcd.print("   seg ");
           lcd.print(kk);
-          lcd.print(" seg  ");
           if ((kk  < 10) && (kk  % 2 == 0))
           {
             digitalWrite(beepPin, 1);  
@@ -346,7 +346,7 @@ void loop () {
         {
           lcd.print(kk);
         }
-        lcd.setCursor(10, 1);
+        lcd.setCursor(9, 1);
       }
 
       read_code(&_tabla_codigos, &code_OK, ptrbuffCode, &read_OK,&MasterCode);
@@ -354,11 +354,11 @@ void loop () {
       {
         actual_duration_light+=__DURATION_LIGHT__- cuenta_minutos;
         lcd.setCursor(0, 1);
-        lcd.print("Luz off:    min");
-        lcd.setCursor(10, 1);
-		disable_T1_interrupt();
+        lcd.print("Luz off:    min ");
+        lcd.setCursor(9, 1);
+		    disable_T1_interrupt();
         code_OK  = false;
-		digitalWrite(beepPin, 0);
+		    digitalWrite(beepPin, 0);
         if (MasterCode)
         { 
           estado=11;
@@ -397,7 +397,10 @@ void loop () {
             delay(100);
             _tabla_codigos.num_rows  = 1;
             code_load_EEPROM(&_tabla_codigos);  
-            lcd.print("Codes Erased");
+            lcd.setCursor(0, 0);
+            lcd.print("Codes Erased    ");
+            lcd.setCursor(0, 1);
+            lcd.print("                ");
             delay(1000);
             disable_T1_interrupt();
             estado=10;
@@ -539,48 +542,50 @@ void loop () {
 }
 void text2lcd(byte estado)
 {
-  lcd.clear();
+  
   lcd.setCursor(0, 0);
   switch (estado)
   {
     case 0:  // ESPERANDO IDENTIFICACION
+      lcd.clear();
       lcd.setBacklight(LOW);
       break;
     case 1:  // PUERTA ABIERTA DETECTADA
-      lcd.print("Puerta abierta");
+      lcd.print("Puerta abierta ");
       lcd.setCursor(0, 1);
       lcd.print("Alarma en:   seg");
       lcd.setCursor(10, 1);
       break;
     case 10:  // IDENTIFICACION OK, TEMPORIZANDO LA LUZ
       lcd.setBacklight(HIGH);
-      lcd.print("Identif. OK");
+      lcd.print("Identif. OK    ");
       lcd.setCursor(0, 1);
-      lcd.print("Luz off:    min");
-      lcd.setCursor(10, 1);
+      lcd.print("Luz off:    min ");
+      lcd.setCursor(9, 1);
       break;
     case 11:  // IDENTIFICACION MASTERKEY OK, TEMPORIZANDO LA LUZ
       lcd.setBacklight(HIGH);
-      lcd.print("MASTERKEY");
-      lcd.setCursor(2, 1);
-      lcd.print("for program");
+      lcd.print("MASTERKEY      ");
+      lcd.setCursor(0, 1);
+      lcd.print("  to erase CODES");
       lcd.setCursor(0, 1);
       break;
     case 100:  // TIMEOUT PARA LA IDENTIFICACION, ACTIVAR ALARMA
       lcd.setBacklight(HIGH);
-      lcd.print("Alarma activa");
+      lcd.print("Alarma activa  ");
       lcd.setCursor(0, 1);
-      lcd.print("SMS 061 enviado");
+      lcd.print("Aviso policia  ");
       break;
     case 200:  // se activa el modo manual mediante la llave
+      lcd.clear();
       lcd.setBacklight(HIGH);
-      lcd.print("Modo manual");
+      lcd.print("Modo manual    ");
       break;
     case 250:  // se activa el modo de reconocer nuevo codigo
       lcd.setBacklight(HIGH);
-      lcd.print("Nuevo codigo");
+      lcd.print("Nuevo codigo   ");
       lcd.setCursor(0, 1);
-      lcd.print("Pasar pastilla");
+      lcd.print("Pasar pastilla ");
       lcd.setCursor(0, 1);
       break;
   }
@@ -759,4 +764,3 @@ void serialFlush(){
     char t = Serial.read();
   }
 }   
-
